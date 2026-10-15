@@ -1,0 +1,14 @@
+node_modules/
+dist/
+.qa/
+.vite/
+*.log
+.DS_Store
+evidence/
+repo-source.json
+issue-source.json
+comment-source.json
+issue-index.json
+.env
+.env.*
+!.env.example

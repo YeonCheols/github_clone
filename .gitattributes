@@ -1,0 +1,2 @@
+# Captured source-file samples retain their original whitespace.
+public/assets/source-files/*.txt -whitespace linguist-generated=true

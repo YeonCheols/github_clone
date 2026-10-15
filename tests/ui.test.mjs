@@ -1,0 +1,57 @@
+import {test} from 'node:test';
+import assert from 'node:assert/strict';
+import {readFile} from 'node:fs/promises';
+import {JSDOM} from 'jsdom';
+const dom=new JSDOM('<div id="root"></div>',{url:'http://127.0.0.1:4173/#/morluto/rea'});
+for(const name of ['window','document','location','localStorage','HTMLElement','Event','MouseEvent'])globalThis[name]=dom.window[name];
+globalThis.addEventListener=window.addEventListener.bind(window);
+globalThis.removeEventListener=window.removeEventListener.bind(window);
+globalThis.IS_REACT_ACT_ENVIRONMENT=true;
+window.scrollTo=()=>{};window.HTMLElement.prototype.scrollIntoView=()=>{};
+globalThis.fetch=async path=>new Response(await readFile(new URL('../public'+path,import.meta.url),'utf8'));
+const {act,createElement}=await import('react');
+const {createRoot}=await import('react-dom/client');
+const {App}=await import('../.qa/ssr/App.js');
+const host=document.getElementById('root');
+let root;
+const button=(text)=>[...host.querySelectorAll('button')].find(x=>x.textContent.trim()===text);
+const tick=()=>new Promise(resolve=>setTimeout(resolve,20));
+async function click(el){assert.ok(el,'click target exists');await act(async()=>{el.dispatchEvent(new MouseEvent('click',{bubbles:true}));await tick()})}
+async function type(el,value){assert.ok(el);await act(async()=>{const proto=el.tagName==='TEXTAREA'?window.HTMLTextAreaElement.prototype:window.HTMLInputElement.prototype;Object.getOwnPropertyDescriptor(proto,'value').set.call(el,value);el.dispatchEvent(new Event('input',{bubbles:true}));await tick()})}
+async function route(path){await act(async()=>{location.hash=path;await tick()})}
+
+test('repository → file preview/code → issue filters → local creation/comment/status survive remount',async()=>{
+ await act(async()=>{root=createRoot(host);root.render(createElement(App));await tick()});
+ assert.match(host.textContent,/Reverse engineer anything/);
+ assert.ok(host.querySelector('a[href="#/morluto/rea/blob/main/README.md"]'));
+ await route('/morluto/rea/blob/main/README.md');
+ assert.match(host.querySelector('.markdown').textContent,/REA: Reverse Engineer Anything/);
+ await click(button('Code'));
+ assert.match(host.querySelector('.source-code').textContent,/Reverse Engineer Anything/);
+ await route('/morluto/rea/issues');
+ assert.ok(host.querySelectorAll('.issue-row').length>5);
+ await type(host.querySelector('[aria-label="Search issues"]'),'Getter-result');
+ assert.equal(host.querySelectorAll('.issue-row').length,1);
+ await route('/morluto/rea/issues/3839');
+ assert.match(host.querySelector('.detail-title').textContent,/#3839/);
+ assert.match(host.querySelector('.comment-body').textContent,/RangeError/);
+ await click(button('New issue'));
+ const dialog=host.querySelector('[role="dialog"]');assert.ok(dialog);
+ await type(dialog.querySelector('input'),'Local issue integration test');
+ await type(dialog.querySelector('textarea'),'Local-only issue body');
+ await act(async()=>{dialog.querySelector('form').dispatchEvent(new Event('submit',{bubbles:true,cancelable:true}));await tick()});
+ assert.match(host.querySelector('.detail-title').textContent,/Local issue integration test/);
+ const newPath=location.hash;
+ await type(host.querySelector('[aria-label="Comment"]'),'A persisted local comment');
+ await act(async()=>{host.querySelector('.comment-form').dispatchEvent(new Event('submit',{bubbles:true,cancelable:true}));await tick()});
+ assert.match(host.textContent,/A persisted local comment/);
+ await click(button('Close issue'));
+ assert.match(host.querySelector('.status').textContent,/Closed/);
+ await act(async()=>{root.unmount();await tick()});
+ assert.equal(location.hash,newPath);
+ await act(async()=>{root=createRoot(host);root.render(createElement(App));await tick()});
+ assert.match(host.querySelector('.detail-title').textContent,/Local issue integration test/);
+ assert.match(host.textContent,/A persisted local comment/);
+ assert.match(host.querySelector('.status').textContent,/Closed/);
+ await act(async()=>{root.unmount();await tick()});
+});
