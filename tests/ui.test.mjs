@@ -14,6 +14,8 @@ const {createRoot}=await import('react-dom/client');
 const {App}=await import('../.qa/ssr/App.js');
 const host=document.getElementById('root');
 let root;
+let copied;
+Object.defineProperty(globalThis,'navigator',{configurable:true,value:{clipboard:{writeText:async text=>{copied=text}}}});
 const button=(text)=>[...host.querySelectorAll('button')].find(x=>x.textContent.trim()===text);
 const tick=()=>new Promise(resolve=>setTimeout(resolve,20));
 async function click(el){assert.ok(el,'click target exists');await act(async()=>{el.dispatchEvent(new MouseEvent('click',{bubbles:true}));await tick()})}
@@ -24,6 +26,28 @@ test('repository → file preview/code → issue filters → local creation/comm
  await act(async()=>{root=createRoot(host);root.render(createElement(App));await tick()});
  assert.match(host.textContent,/Reverse engineer anything/);
  assert.ok(host.querySelector('a[href="#/morluto/rea/blob/main/README.md"]'));
+ const codeToggle=host.querySelector('.code-menu>button');
+ await click(codeToggle);
+ assert.equal(codeToggle.getAttribute('aria-expanded'),'true');
+ assert.equal(host.querySelector('.backdrop'),null);
+ assert.equal(host.querySelector('[aria-label="Clone address"]').value,'https://github.com/morluto/rea.git');
+ await click(button('SSH'));
+ assert.equal(host.querySelector('[aria-label="Clone address"]').value,'git@github.com:morluto/rea.git');
+ await click(host.querySelector('.clone-address [aria-label="Copy to clipboard"]'));
+ assert.equal(copied,'git@github.com:morluto/rea.git');
+ assert.ok(host.querySelector('.clone-address [aria-label="Copied!"].copied'));
+ await click(button('GitHub CLI'));
+ assert.equal(host.querySelector('[aria-label="Clone address"]').value,'gh repo clone morluto/rea');
+ assert.ok(host.querySelector('.clone-address [aria-label="Copy to clipboard"]'));
+ await click(button('Codespaces'));
+ assert.match(host.querySelector('.clone-codespaces').textContent,/Sign in to GitHub/);
+ await act(async()=>{document.dispatchEvent(new window.KeyboardEvent('keydown',{key:'Escape',bubbles:true}));await tick()});
+ assert.equal(host.querySelector('.clone-panel'),null);
+ assert.equal(document.activeElement,codeToggle);
+ await click(codeToggle);
+ await act(async()=>{document.body.dispatchEvent(new Event('pointerdown',{bubbles:true}));await tick()});
+ assert.equal(host.querySelector('.clone-panel'),null);
+
  await route('/morluto/rea/blob/main/README.md');
  assert.match(host.querySelector('.markdown').textContent,/REA: Reverse Engineer Anything/);
  await click(button('Code'));

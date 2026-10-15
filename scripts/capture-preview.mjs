@@ -18,15 +18,20 @@ function previewUrl(value){
   return {origin:u.origin,path:path.replace(/\/$/,'')};
  }catch{return null;}
 }
-const steps=[
+const allSteps=[
  ['repository','/morluto/rea','저장소 메인'],
  ['file','/morluto/rea/blob/main/README.md','README 파일'],
  ['issues','/morluto/rea/issues','Issues 목록'],
  ['issue-detail','/morluto/rea/issues/3839','이슈 #3839 상세'],
 ];
+const onlyIndex=process.argv.indexOf('--only');
+const requested=onlyIndex<0?allSteps.map(s=>s[0]):(process.argv[onlyIndex+1]||'').split(',');
+if(requested.some(name=>!allSteps.some(s=>s[0]===name)))throw new Error('--only에는 repository,file,issues,issue-detail 중 화면 이름을 쉼표로 구분해 주세요.');
+const steps=allSteps.filter(s=>requested.includes(s[0]));
 if(process.argv.includes('--help')){
  console.log('분석용 Chrome에서 로컬 프리뷰 네 화면을 열어 REA로 캡처합니다. 안내에 따라 같은 탭을 이동하고 Enter를 누르세요. 결과는 evidence/preview-* 에 저장됩니다.');
  console.log('--resume: 직전 수집의 완료된 화면을 보존하고 나머지 화면부터 이어갑니다.');
+ console.log('--only issues,issue-detail: 지정한 화면만 새로 수집합니다.');
  process.exit(0);
 }
 if(!process.stdin.isTTY)throw new Error('일반 터미널에서 실행해 주세요.');
@@ -40,16 +45,19 @@ if(process.argv.includes('--resume')){
  for(const source of previous.sort((a,b)=>b.time-a.time)){
   for(const [name,path] of steps){
    if(records.some(r=>r.name===name))continue;
-   let shot,page,bytes;
+   let shot,page,bytes,verification;
    try{
     const raw=JSON.parse(await readFile(join(source.path,name+'-screenshot.json'),'utf8'));shot=raw.normalized_result??raw;
     const rawPage=JSON.parse(await readFile(join(source.path,name+'-page.json'),'utf8'));page=rawPage.normalized_result??rawPage;
     bytes=await readFile(join(source.path,name+'.png'));
+    try{verification=JSON.parse(await readFile(join(source.path,name+'-route.json'),'utf8'));}catch{}
    }catch{continue;}
-   if(previewUrl(shot.target?.url)?.path!==path||previewUrl(page.target?.url)?.path!==path)continue;
+   const verified=verification?.path===path&&verification?.target_id===shot.target?.target_id&&verification?.target_id===page.target?.target_id&&verification?.screenshot_sha256===shot.artifact?.sha256&&verification?.urls?.length===3&&verification.urls.every(url=>previewUrl(url)?.path===path);
+   if(!verified&&(previewUrl(shot.target?.url)?.path!==path||previewUrl(page.target?.url)?.path!==path))continue;
    if(bytes.length!==shot.artifact?.bytes||createHash('sha256').update(bytes).digest('hex')!==shot.artifact?.sha256)continue;
    for(const suffix of ['.png','-screenshot.json','-page.json'])await copyFile(join(source.path,name+suffix),join(output,name+suffix));
-   records.push({name,url:shot.target.url,viewport:shot.viewport,captured_at:shot.captured_at,resumed_from:source.path});
+   if(verified)await copyFile(join(source.path,name+'-route.json'),join(output,name+'-route.json'));
+   records.push({name,url:verified?verification.urls[0]:shot.target.url,viewport:shot.viewport,captured_at:shot.captured_at,resumed_from:source.path});
    console.log('이전 수집에서 유지: '+name);
   }
  }
@@ -101,13 +109,26 @@ try{
    selected=target.target_id;
    const targetOrigin=previewUrl(target.url).origin;
    const args=[endpoint,selected,'--allowed-origins',targetOrigin];
+   const urls=[target.url];
+   async function verifyRoute(stage,result){
+    const discovery=await run(name+'-'+stage+'-targets',['list-browser-targets',endpoint]);
+    const current=discovery.targets.find(t=>t.target_id===selected);
+    if(previewUrl(current?.url)?.path!==path||previewUrl(current?.url)?.origin!==targetOrigin)throw new Error('캡처 중 페이지가 바뀌었습니다. 안내 주소를 연 상태로 다시 실행해 주세요.');
+    // CDP frame URLs can omit the hash. Keep the raw REA result and
+    // verify the full route independently through target discovery.
+    const documentUrl=new URL(target.url);documentUrl.hash='';
+    if(result.target?.target_id!==selected||![target.url,documentUrl.href].includes(result.target?.url))throw new Error('캡처 결과의 대상 탭 또는 문서 주소가 다릅니다.');
+    urls.push(current.url);
+   }
    const shot=await run(name+'-screenshot',['capture-web-screenshot',...args]);
-   if(previewUrl(shot.target.url)?.path!==path||previewUrl(shot.target.url)?.origin!==targetOrigin)throw new Error('캡처 중 페이지가 바뀌었습니다. 다시 실행해 주세요.');
+   await verifyRoute('after-screenshot',shot);
    const bytes=Buffer.from(shot.artifact.data_base64,'base64');
    if(bytes.length!==shot.artifact.bytes||createHash('sha256').update(bytes).digest('hex')!==shot.artifact.sha256)throw new Error('PNG 검증 실패');
    await writeFile(join(output,name+'.png'),bytes,{flag:'wx'});
-   await run(name+'-page',['inspect-web-page',...args,'--include-accessibility-text','--include-console-text']);
-   records.push({name,url:shot.target.url,viewport:shot.viewport,captured_at:shot.captured_at});
+   const page=await run(name+'-page',['inspect-web-page',...args,'--include-accessibility-text','--include-console-text']);
+   await verifyRoute('after-page',page);
+   await writeFile(join(output,name+'-route.json'),JSON.stringify({path,target_id:selected,urls,screenshot_sha256:shot.artifact.sha256},null,2));
+   records.push({name,url:target.url,viewport:shot.viewport,captured_at:shot.captured_at});
    console.log(`저장 완료: ${name} (${shot.viewport.width} × ${shot.viewport.height})`);
    if(shot.viewport.width!==1200||shot.viewport.height!==860)console.log('원본은 1200 × 860입니다. 크기가 달라 정확한 픽셀 비교에는 제약이 있습니다.');
    break;
@@ -116,6 +137,6 @@ try{
  console.log('\n프리뷰 수집 완료. 채팅에 “프리뷰 수집 완료”라고 알려 주세요.');
 }catch(e){console.error('\n미완료: '+e.message);process.exitCode=1;}
 finally{
- await writeFile(join(output,'summary.json'),JSON.stringify({completed:records.length===steps.length,records},null,2));
+ await writeFile(join(output,'summary.json'),JSON.stringify({completed:records.length===steps.length,requested_screens:steps.map(s=>s[0]),records},null,2));
  console.log('결과 폴더: '+output);terminal.close();
 }
