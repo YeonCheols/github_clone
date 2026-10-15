@@ -14,23 +14,25 @@ function previewUrl(value){
   const u=new URL(value);
   if(u.protocol!=='http:'||!['127.0.0.1','localhost','[::1]'].includes(u.hostname)||u.port!=='4173')return null;
   let path=u.hash.slice(1)||u.pathname;
-  if(path==='/'||path==='')path='/morluto/rea';
-  return {origin:u.origin,path:path.replace(/\/$/,'')};
+  if(path==='/'||path==='')path='/';
+  return {origin:u.origin,path:path==='/'?'/':path.replace(/\/$/,'')};
  }catch{return null;}
 }
 const allSteps=[
+ ['home','/','로그인 홈'],
  ['repository','/morluto/rea','저장소 메인'],
  ['file','/morluto/rea/blob/main/README.md','README 파일'],
  ['issues','/morluto/rea/issues','Issues 목록'],
  ['issue-detail','/morluto/rea/issues/3839','이슈 #3839 상세'],
 ];
 const onlyIndex=process.argv.indexOf('--only');
-const requested=onlyIndex<0?allSteps.map(s=>s[0]):(process.argv[onlyIndex+1]||'').split(',');
-if(requested.some(name=>!allSteps.some(s=>s[0]===name)))throw new Error('--only에는 repository,file,issues,issue-detail 중 화면 이름을 쉼표로 구분해 주세요.');
+const requested=onlyIndex<0?allSteps.filter(s=>s[0]!=='home').map(s=>s[0]):(process.argv[onlyIndex+1]||'').split(',');
+if(requested.some(name=>!allSteps.some(s=>s[0]===name)))throw new Error('--only에는 home,repository,file,issues,issue-detail 중 화면 이름을 쉼표로 구분해 주세요.');
 const steps=allSteps.filter(s=>requested.includes(s[0]));
 if(process.argv.includes('--help')){
  console.log('분석용 Chrome에서 로컬 프리뷰 네 화면을 열어 REA로 캡처합니다. 안내에 따라 같은 탭을 이동하고 Enter를 누르세요. 결과는 evidence/preview-* 에 저장됩니다.');
  console.log('--resume: 직전 수집의 완료된 화면을 보존하고 나머지 화면부터 이어갑니다.');
+ console.log('--only home: 홈 화면을 수집합니다.');
  console.log('--only issues,issue-detail: 지정한 화면만 새로 수집합니다.');
  process.exit(0);
 }

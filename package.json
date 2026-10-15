@@ -8,7 +8,9 @@
     "build": "vite build && node scripts/prepare-sites-build.mjs",
     "preview": "vite preview",
     "test:sites": "node --test tests/sites-worker.test.mjs",
-    "test:ui": "vite build --ssr src/App.jsx --outDir .qa/ssr && node --test tests/ui.test.mjs"
+    "test:ui": "vite build --ssr src/App.jsx --outDir .qa/ssr && node --test tests/ui.test.mjs",
+    "test:api": "node --test tests/github-api.test.mjs tests/account-pages-api.test.mjs tests/profile.test.mjs",
+    "test:routes": "node --test tests/repository-route.test.mjs tests/account-page-route.test.mjs"
   },
   "dependencies": {
     "@primer/octicons-react": "^19.40.0",
