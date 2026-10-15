@@ -1,5 +1,5 @@
 import {spawn} from 'node:child_process';
-import {open,readFile,writeFile,mkdir,mkdtemp} from 'node:fs/promises';
+import {open,readFile,writeFile,mkdir,mkdtemp,readdir,stat,copyFile} from 'node:fs/promises';
 import {dirname,resolve,join} from 'node:path';
 import {fileURLToPath} from 'node:url';
 import {createInterface} from 'node:readline/promises';
@@ -26,6 +26,7 @@ const steps=[
 ];
 if(process.argv.includes('--help')){
  console.log('분석용 Chrome에서 로컬 프리뷰 네 화면을 열어 REA로 캡처합니다. 안내에 따라 같은 탭을 이동하고 Enter를 누르세요. 결과는 evidence/preview-* 에 저장됩니다.');
+ console.log('--resume: 직전 수집의 완료된 화면을 보존하고 나머지 화면부터 이어갑니다.');
  process.exit(0);
 }
 if(!process.stdin.isTTY)throw new Error('일반 터미널에서 실행해 주세요.');
@@ -33,6 +34,26 @@ await mkdir(join(app,'evidence'),{recursive:true});
 const output=await mkdtemp(join(app,'evidence/preview-'));
 const terminal=createInterface({input:process.stdin,output:process.stdout});
 const records=[];
+if(process.argv.includes('--resume')){
+ const folders=await readdir(join(app,'evidence'),{withFileTypes:true});
+ const previous=await Promise.all(folders.filter(f=>f.isDirectory()&&f.name.startsWith('preview-')&&join(app,'evidence',f.name)!==output).map(async f=>({path:join(app,'evidence',f.name),time:(await stat(join(app,'evidence',f.name))).mtimeMs})));
+ for(const source of previous.sort((a,b)=>b.time-a.time)){
+  for(const [name,path] of steps){
+   if(records.some(r=>r.name===name))continue;
+   let shot,page,bytes;
+   try{
+    const raw=JSON.parse(await readFile(join(source.path,name+'-screenshot.json'),'utf8'));shot=raw.normalized_result??raw;
+    const rawPage=JSON.parse(await readFile(join(source.path,name+'-page.json'),'utf8'));page=rawPage.normalized_result??rawPage;
+    bytes=await readFile(join(source.path,name+'.png'));
+   }catch{continue;}
+   if(previewUrl(shot.target?.url)?.path!==path||previewUrl(page.target?.url)?.path!==path)continue;
+   if(bytes.length!==shot.artifact?.bytes||createHash('sha256').update(bytes).digest('hex')!==shot.artifact?.sha256)continue;
+   for(const suffix of ['.png','-screenshot.json','-page.json'])await copyFile(join(source.path,name+suffix),join(output,name+suffix));
+   records.push({name,url:shot.target.url,viewport:shot.viewport,captured_at:shot.captured_at,resumed_from:source.path});
+   console.log('이전 수집에서 유지: '+name);
+  }
+ }
+}
 async function run(name,args){
  const file=join(output,name+'.json'),handle=await open(file,'wx');
  let code;
@@ -49,6 +70,7 @@ try{
  console.log('원본을 수집했던 분석용 Chrome 창을 사용해 주세요. 프리뷰 서버는 실행한 채로 두세요.');
  console.log('화면 상단으로 이동하고 브라우저 확대 비율을 원본과 동일하게 유지해 주세요.');
  for(const [name,path,label]of steps){
+  if(records.some(r=>r.name===name))continue;
   let attempt=0;
   for(;;){
    const answer=await terminal.question(`\n${label}: ${origin}/#${path}\n같은 분석용 Chrome 탭에서 이 주소를 열고 Enter (중단: q): `);

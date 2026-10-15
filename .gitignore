@@ -4,6 +4,7 @@ dist/
 .vite/
 *.log
 .DS_Store
+.cache/
 evidence/
 repo-source.json
 issue-source.json
