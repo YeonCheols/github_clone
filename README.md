@@ -22,7 +22,24 @@ npm run dev -- --host 127.0.0.1 --port 4173 --strictPort
 
 초기 데이터는 수집 당시의 공개 데이터 스냅샷입니다. GitHub API 실시간 연동 및 원본 저장소에 쓰는 기능은 구현하지 않았습니다. 작성·수정은 브라우저의 localStorage에만 저장됩니다.
 
-## 검증
+## 저장소 전용 GitHub 인증
+
+전역 GitHub CLI 계정과 시스템 키체인을 변경하지 않으려면 일반 터미널에서 실행합니다.
+
+```bash
+node scripts/github-local.mjs login --push
+```
+
+브라우저에서는 `YeonCheols` 계정으로 인증합니다. 토큰은 접근 권한을 제한한 `.git/gh-local` 파일에만 저장되며 Git 추적 대상에 들어가지 않습니다. Git 인증 helper 역시 이 저장소의 `.git/config`에만 설정됩니다.
+
+이후 확인 및 푸시:
+
+```bash
+node scripts/github-local.mjs status
+node scripts/github-local.mjs push
+```
+
+## 검증 명령
 
 ```bash
 npm run test:ui
